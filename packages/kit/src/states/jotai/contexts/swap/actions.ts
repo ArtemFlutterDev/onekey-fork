@@ -251,10 +251,10 @@ class ContentJotaiActionsSwap extends ContextJotaiActionsBase {
       if (!needChangeToToken) {
         needChangeToToken =
           token.networkId ===
-          swapBridgeDefaultTokenExtraConfigs.mainNetDefaultToTokenConfig
-            .networkId
+            swapBridgeDefaultTokenExtraConfigs.mainNetDefaultToTokenConfig
+              .networkId
             ? swapBridgeDefaultTokenExtraConfigs.mainNetDefaultToTokenConfig
-                .defaultToToken
+              .defaultToToken
             : swapBridgeDefaultTokenExtraConfigs.defaultToToken;
       }
       return needChangeToToken;
@@ -363,87 +363,73 @@ class ContentJotaiActionsSwap extends ContextJotaiActionsBase {
     },
   );
 
-  runQuote = contextAtomMethod(
-    async (
-      get,
-      set,
-      fromToken: ISwapToken,
-      toToken: ISwapToken,
-      slippagePercentage: number,
-      autoSlippage?: boolean,
-      address?: string,
-      accountId?: string,
-      loadingDelayEnable?: boolean,
-      blockNumber?: number,
-      kind?: ESwapQuoteKind,
-      fromTokenAmount?: string,
-      toTokenAmount?: string,
-      receivingAddress?: string,
-    ) => {
-      const shouldRefreshQuote = get(swapShouldRefreshQuoteAtom());
-      if (shouldRefreshQuote) {
-        this.cleanQuoteInterval();
-        set(swapQuoteActionLockAtom(), (v) => ({ ...v, actionLock: false }));
-        return;
-      }
-      set(swapApprovingAtom(), false);
-      await backgroundApiProxy.serviceSwap.setApprovingTransaction(undefined);
-      try {
-        if (!loadingDelayEnable) {
-          set(swapQuoteFetchingAtom(), true);
-        }
-        const protocol = get(swapTypeSwitchAtom());
-        const limitPartiallyFillableObj = get(swapLimitPartiallyFillAtom());
-        const limitPartiallyFillable = limitPartiallyFillableObj.value;
-        const expirationTime = get(swapLimitExpirationTimeAtom());
-        const limitUserMarketPrice = get(swapLimitPriceUseRateAtom());
-        const res = await backgroundApiProxy.serviceSwap.fetchQuotes({
-          fromToken,
-          toToken,
-          fromTokenAmount,
-          toTokenAmount,
-          kind,
-          userAddress: address,
-          slippagePercentage,
-          autoSlippage,
-          blockNumber,
-          receivingAddress,
-          accountId,
-          protocol,
-          userMarketPriceRate: limitUserMarketPrice.rate,
-          ...(protocol === ESwapTabSwitchType.LIMIT
-            ? {
-                expirationTime: Number(expirationTime.value),
-                limitPartiallyFillable,
-              }
-            : {}),
+runQuote = contextAtomMethod(
+  async (
+    get,
+    set,
+    fromToken: ISwapToken,
+    toToken: ISwapToken,
+    slippagePercentage: number,
+    autoSlippage?: boolean,
+    address?: string,
+    accountId?: string,
+    loadingDelayEnable?: boolean,
+    kind?: ESwapQuoteKind,
+    fromTokenAmount?: string,
+  ) => {
+    // 1) Если нужно сбросить — чистим интервал и выходим
+    if (get(swapShouldRefreshQuoteAtom())) {
+      this.cleanQuoteInterval();
+      set(swapQuoteActionLockAtom(), (v) => ({ ...v, actionLock: false }));
+      return;
+    }
+
+    // 2) Сбрасываем approve-статус
+    set(swapApprovingAtom(), false);
+    await backgroundApiProxy.serviceSwap.setApprovingTransaction(undefined);
+
+    // 3) Включаем спиннер (если не отложенная загрузка)
+    if (!loadingDelayEnable) {
+      set(swapQuoteFetchingAtom(), true);
+    }
+
+    try {
+      const protocol = get(swapTypeSwitchAtom());
+
+      // 4) Запрашиваем все котировки
+      const quotes = await backgroundApiProxy.serviceSwap.fetchQuotes({
+        fromToken,
+        toToken,
+        fromTokenAmount,
+        slippagePercentage,
+        kind,
+        protocol,
+        accountId,
+      });
+
+      // 5) Сохраняем полный список котировок
+      set(swapQuoteListAtom(), quotes);
+
+      // 6) Автоматически выставляем лучший провайдер, если ещё не было ручного выбора
+      const manual = get(swapManualSelectQuoteProvidersAtom());
+      if (!manual && quotes.length > 0) {
+        const best = quotes.find((q) => q.isBest) ?? quotes[0];
+        set(swapManualSelectQuoteProvidersAtom(), best);
+        set(swapToTokenAmountAtom(), {
+          value: best.toAmount ?? '0',
+          isInput: false,
         });
-        if (!loadingDelayEnable) {
-          set(swapQuoteFetchingAtom(), false);
-          set(swapQuoteListAtom(), res);
-          set(swapQuoteEventTotalCountAtom(), {
-            count: res.length,
-          });
-        } else {
-          set(swapSilenceQuoteLoading(), true);
-          setTimeout(() => {
-            set(swapSilenceQuoteLoading(), false);
-            set(swapQuoteListAtom(), res);
-            set(swapQuoteEventTotalCountAtom(), {
-              count: res.length,
-            });
-          }, 800);
-        }
-      } catch (e: any) {
-        // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-        if (e?.cause !== ESwapFetchCancelCause.SWAP_QUOTE_CANCEL) {
-          set(swapQuoteFetchingAtom(), false);
-        }
-      } finally {
-        set(swapQuoteActionLockAtom(), (v) => ({ ...v, actionLock: false }));
       }
-    },
-  );
+    } catch (error) {
+      console.error('runQuote failed', error);
+    } finally {
+      // 7) Всегда выключаем спиннер и снимаем блокировку
+      set(swapQuoteFetchingAtom(), false);
+      set(swapQuoteActionLockAtom(), (v) => ({ ...v, actionLock: false }));
+    }
+  },
+);
+
 
   quoteEventHandler = contextAtomMethod(
     (
@@ -464,6 +450,13 @@ class ContentJotaiActionsSwap extends ContextJotaiActionsBase {
         case 'message': {
           const { data } = event.event as IEventSourceMessageEvent;
           if (data) {
+            const parsed = JSON.parse(data);
+            if (Array.isArray(parsed)) {
+              // это сразу наш массив IFetchQuoteResult[]
+              set(swapQuoteListAtom(), parsed);
+              set(swapQuoteFetchingAtom(), false);
+              break;  // выходим из switch — остальной код не выполняем
+            }
             const dataJson = JSON.parse(data) as ISwapQuoteEventData;
             const autoSlippageData = dataJson as ISwapQuoteEventAutoSlippage;
             if (autoSlippageData?.autoSuggestedSlippage) {
@@ -539,9 +532,9 @@ class ContentJotaiActionsSwap extends ContextJotaiActionsBase {
                   (quote) => {
                     if (
                       `${quote.fromTokenInfo.networkId}-${quote.fromTokenInfo.contractAddress}` ===
-                        swapAutoSlippageSuggestedValue?.from &&
+                      swapAutoSlippageSuggestedValue?.from &&
                       `${quote.toTokenInfo.networkId}-${quote.toTokenInfo.contractAddress}` ===
-                        swapAutoSlippageSuggestedValue?.to &&
+                      swapAutoSlippageSuggestedValue?.to &&
                       swapAutoSlippageSuggestedValue.value &&
                       !quote.autoSuggestedSlippage
                     ) {
@@ -572,7 +565,7 @@ class ContentJotaiActionsSwap extends ContextJotaiActionsBase {
                       (oldQuoteRes) =>
                         quote.info.provider === oldQuoteRes.info.provider &&
                         quote.info.providerName ===
-                          oldQuoteRes.info.providerName,
+                        oldQuoteRes.info.providerName,
                     ),
                 );
                 newQuoteList = [...newQuoteList, ...newAddQuoteRes]
@@ -637,49 +630,34 @@ class ContentJotaiActionsSwap extends ContextJotaiActionsBase {
       autoSlippage?: boolean,
       address?: string,
       accountId?: string,
-      blockNumber?: number,
       kind?: ESwapQuoteKind,
       fromTokenAmount?: string,
-      toTokenAmount?: string,
-      receivingAddress?: string,
     ) => {
-      const shouldRefreshQuote = get(swapShouldRefreshQuoteAtom());
-      const protocol = get(swapTypeSwitchAtom());
-      const limitPartiallyFillableObj = get(swapLimitPartiallyFillAtom());
-      const limitPartiallyFillable = limitPartiallyFillableObj.value;
-      const expirationTime = get(swapLimitExpirationTimeAtom());
-      if (shouldRefreshQuote) {
+      // Если нужно прервать — чистим интервалы и выходим
+      if (get(swapShouldRefreshQuoteAtom())) {
         this.cleanQuoteInterval();
         set(swapQuoteActionLockAtom(), (v) => ({ ...v, actionLock: false }));
         return;
       }
-      set(swapApprovingAtom(), false);
-      await backgroundApiProxy.serviceSwap.setApprovingTransaction(undefined);
-      set(swapQuoteFetchingAtom(), true);
-      const limitUserMarketPrice = get(swapLimitPriceUseRateAtom());
-      await backgroundApiProxy.serviceSwap.fetchQuotesEvents({
+
+      // Запускаем одиночный запрос через наш runQuote
+      await this.runQuote.call(
+        set,
         fromToken,
         toToken,
-        fromTokenAmount,
-        userAddress: address,
         slippagePercentage,
         autoSlippage,
-        blockNumber,
+        address,
         accountId,
+      /* loadingDelayEnable */ false,
         kind,
-        toTokenAmount,
-        protocol,
-        receivingAddress,
-        userMarketPriceRate: limitUserMarketPrice.rate,
-        ...(protocol === ESwapTabSwitchType.LIMIT
-          ? {
-              expirationTime: Number(expirationTime.value),
-              limitPartiallyFillable,
-            }
-          : {}),
-      });
+        fromTokenAmount,
+      );
     },
   );
+
+
+
 
   quoteAction = contextAtomMethod(
     async (
@@ -758,11 +736,8 @@ class ContentJotaiActionsSwap extends ContextJotaiActionsBase {
           slippageItem.key === ESwapSlippageSegmentKey.AUTO,
           address,
           accountId,
-          blockNumber,
           quoteKind,
           fromTokenAmount.value,
-          toTokenAmount.value,
-          receivingAddress,
         );
       } else {
         set(swapQuoteFetchingAtom(), false);
@@ -983,9 +958,9 @@ class ContentJotaiActionsSwap extends ContextJotaiActionsBase {
         (quoteResult?.fromTokenInfo?.networkId !== fromToken?.networkId ||
           quoteResult?.toTokenInfo?.networkId !== toToken?.networkId ||
           quoteResult?.fromTokenInfo?.contractAddress !==
-            fromToken?.contractAddress ||
+          fromToken?.contractAddress ||
           quoteResult?.toTokenInfo?.contractAddress !==
-            toToken?.contractAddress)
+          toToken?.contractAddress)
       ) {
         set(rateDifferenceAtom(), rateDifferenceRes);
         return;
@@ -1119,11 +1094,10 @@ class ContentJotaiActionsSwap extends ContextJotaiActionsBase {
               }
             }
             rateDifferenceRes = {
-              value: `${difference.isPositive() ? '+' : ''}${
-                numberFormat(difference.toFixed(), {
-                  formatter: 'priceChange',
-                }) as string
-              }`,
+              value: `${difference.isPositive() ? '+' : ''}${numberFormat(difference.toFixed(), {
+                formatter: 'priceChange',
+              }) as string
+                }`,
               unit,
             };
           }

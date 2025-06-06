@@ -345,12 +345,12 @@ export default class ServiceSwap extends ServiceBase {
       try {
         const allNetAccountId = indexedAccountId
           ? (
-            await this.backgroundApi.serviceAccount.getMockedAllNetworkAccount(
-              {
-                indexedAccountId,
-              },
-            )
-          ).id
+              await this.backgroundApi.serviceAccount.getMockedAllNetworkAccount(
+                {
+                  indexedAccountId,
+                },
+              )
+            ).id
           : otherWalletTypeAccountId ?? '';
         const { accountsInfo } =
           await this.backgroundApi.serviceAllNetwork.getAllNetworkAccounts({
@@ -490,41 +490,57 @@ async fetchQuotes({
   toToken,
   fromTokenAmount,
   slippagePercentage,
-  kind,
-  protocol,
   accountId,
 }: {
   fromToken: ISwapToken;
   toToken: ISwapToken;
-  fromTokenAmount?: string;
+  fromTokenAmount: string;
   slippagePercentage: number;
-  kind?: ESwapQuoteKind;
-  protocol: ESwapTabSwitchType;
   accountId?: string;
 }): Promise<IFetchQuoteResult[]> {
+  console.log('[OKX-QUOTE] 🔄 fetchQuotes called with', {
+    fromToken,
+    toToken,
+    fromTokenAmount,
+    slippagePercentage,
+    accountId,
+  });
+
   this._quoteAbortController?.abort();
   this._quoteAbortController = new AbortController();
 
-  const amountMinimal = new BigNumber(fromTokenAmount || '0')
+  const chainId = Number(fromToken.networkId.split('--').pop() ?? NaN);
+  if (Number.isNaN(chainId)) {
+    console.error('[OKX-QUOTE] ❌ invalid chainId:', fromToken.networkId);
+    return [];
+  }
+
+  const amountMinimal = new BigNumber(fromTokenAmount)
     .shiftedBy(fromToken.decimals)
     .toFixed(0);
 
-  const ZERO = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+  const ZERO_ADDRESS = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
   const okxParams = {
-    chainId: Number(fromToken.networkId.split('--').pop()),
-    fromTokenAddress: fromToken.isNative ? ZERO : fromToken.contractAddress,
-    toTokenAddress:   toToken.isNative ? ZERO : toToken.contractAddress,
+    chainId,
+    fromTokenAddress: fromToken.isNative
+      ? ZERO_ADDRESS
+      : fromToken.contractAddress,
+    toTokenAddress: toToken.isNative
+      ? ZERO_ADDRESS
+      : toToken.contractAddress,
     amount: amountMinimal,
   };
+  console.log('[OKX-QUOTE]   → okxParams:', okxParams);
+
   const path = `${OKX_API_PATH_PREFIX}/quote`;
   const qs = new URLSearchParams({
     chainId: okxParams.chainId.toString(),
     fromTokenAddress: okxParams.fromTokenAddress,
-    toTokenAddress:   okxParams.toTokenAddress,
+    toTokenAddress: okxParams.toTokenAddress,
     amount: okxParams.amount,
   }).toString();
   const headers = signOkxRequest({
-    method:      'GET',
+    method: 'GET',
     requestPath: path,
     queryString: qs,
   });
@@ -534,123 +550,44 @@ async fetchQuotes({
     headers,
     signal: this._quoteAbortController.signal,
   });
-  console.log('🔔 [OKX-QUOTE] response data:', resp.data);
+  console.log('[OKX-QUOTE]   ← OKX response:', resp.data);
 
   if (resp.data.code !== '0' || !Array.isArray(resp.data.data)) {
-    console.warn('[OKX-QUOTE] unexpected response format or error code');
     return [];
   }
   const q = resp.data.data[0];
-  console.log('🔔 [OKX-QUOTE] first quote object (q):', q);
 
-  const fromDecimals = Number(q.fromToken.decimal);
-  const toDecimals   = Number(q.toToken.decimal);
-
-  const baseFrom: ISwapTokenBase = {
-    networkId:       fromToken.networkId,
-    contractAddress: q.fromToken.tokenContractAddress,
-    symbol:          q.fromToken.tokenSymbol,
-    decimals:        fromDecimals,
-    logoURI:         fromToken.logoURI,
-    name:            fromToken.name,
-    isNative:        fromToken.isNative,
-  };
-  const baseTo: ISwapTokenBase = {
-    networkId:       toToken.networkId,
-    contractAddress: q.toToken.tokenContractAddress,
-    symbol:          q.toToken.tokenSymbol,
-    decimals:        toDecimals,
-    logoURI:         toToken.logoURI,
-    name:            toToken.name,
-    isNative:        toToken.isNative,
-  };
-
-  const usdToken: ISwapTokenBase = {
-    networkId:       'usd',
-    contractAddress: '',
-    symbol:          'USD',
-    decimals:        2,
-  };
-
-  const fromAmount = new BigNumber(q.fromTokenAmount)
-    .shiftedBy(-fromDecimals)
-    .toFixed();
-  const toAmount   = new BigNumber(q.toTokenAmount)
-    .shiftedBy(-toDecimals)
-    .toFixed();
-  console.log('🔔 [OKX-QUOTE] fromAmount:', fromAmount, 'toAmount:', toAmount);
-
-  // 1) главный агрегатор
-  const mainQuotes: IFetchQuoteResult[] = q.dexRouterList.map((routerItem: any) => {
-    const proto = routerItem.subRouterList?.[0]?.dexProtocol?.[0] ?? {};
-    const providerName = proto.dexName || 'OKX';
-    const providerLogo = proto.dexLogo || '';
-  console.log('PROVIDER LOGO MAIN ', providerLogo);
-  console.log('PROVIDER NAME MAIN ', providerName);
-  const quoteId = `${routerItem.router}-${Date.now()}`;
-    return {
-      quoteId,
+  return [
+    {
       protocol: EProtocolOfExchange.SWAP,
-      info: {
-        provider:     String(routerItem.router),
-        providerName,
-        providerLogo,
-      },
-      fromAmount,
-      toAmount,
-      instantRate: new BigNumber(toAmount).div(fromAmount).toFixed(),
-      isBest: routerItem.routerPercent === '100',
+      info: { provider: 'okx', providerName: 'OKX DEX' },
+      fromAmount: q.fromTokenAmount,
+      toAmount: q.toTokenAmount,
       fee: {
         percentageFee: 0,
         otherFeeInfos: [
-          { token: usdToken, amount: String(q.tradeFee) },
-          { token: baseTo,  amount: String(q.estimateGasFee) },
+          { token: 'USD', amount: String(q.tradeFee) },
+          {
+            token: q.estimateGasFeeTokenSymbol || toToken.symbol,
+            amount: String(q.estimateGasFee),
+          },
         ],
       },
-      fromTokenInfo: baseFrom,
-      toTokenInfo:   baseTo,
-    };
-  });
-  console.log('🔔 [OKX-QUOTE] mainQuotes array:', mainQuotes);
-
-  // 2) сравнение с другими DEX-ами
-  const cmpQuotes: IFetchQuoteResult[] = q.quoteCompareList.map((item: any) => {
-     console.log('PROVIDER ITEM OTHER', item)
-    const altTo = new BigNumber(item.amountOut)
-      .shiftedBy(-toDecimals)
-      .toFixed();
-    return {
-      protocol: EProtocolOfExchange.SWAP,
-      info: {
-        provider:     item.dexName || '',
-        providerName: item.dexName || '',
-        providerLogo: item.dexLogo || '',
+      fromTokenInfo: {
+        ...fromToken,
+        contractAddress: q.fromToken.tokenContractAddress,
+        decimals: q.fromToken.decimals,
+        symbol: q.fromToken.tokenSymbol,
       },
-      fromAmount,
-      toAmount: altTo,
-      instantRate: new BigNumber(altTo).div(fromAmount).toFixed(),
-      isBest: false,
-      fee: {
-        percentageFee: 0,
-        otherFeeInfos: [
-          { token: usdToken, amount: String(item.tradeFee) },
-        ],
+      toTokenInfo: {
+        ...toToken,
+        contractAddress: q.toToken.tokenContractAddress,
+        decimals: q.toToken.decimals,
+        symbol: q.toToken.tokenSymbol,
       },
-      fromTokenInfo: baseFrom,
-      toTokenInfo:   baseTo,
-    };
-  });
-  console.log('🔔 [OKX-QUOTE] cmpQuotes array:', cmpQuotes);
-
-  const allQuotes = [...mainQuotes, ...cmpQuotes];
-  console.log('🔔 [OKX-QUOTE] all combined quotes:', allQuotes);
-
-  return allQuotes;
+    },
+  ];
 }
-
-
-
-
   // async fetchQuotes({
   //   fromToken,
   //   toToken,
@@ -754,178 +691,138 @@ async fetchQuotes({
   //   ]; //  no support providers
   // }
 
-  private _quotePollingTimeout?: ReturnType<typeof setTimeout>;
+private _quotePollingTimeout?: ReturnType<typeof setTimeout>;
 
-  // ─── 2) fetchQuotesEvents (SSE-эммуляция с поллингом) ───────────────
-  @backgroundMethod()
-  async fetchQuotesEvents({
-    fromToken,
-    toToken,
+@backgroundMethod()
+async fetchQuotesEvents({
+  fromToken,
+  toToken,
+  fromTokenAmount,
+  slippagePercentage,
+  accountId,
+}: {
+  fromToken: ISwapToken;
+  toToken: ISwapToken;
+  fromTokenAmount?: string;
+  slippagePercentage: number;
+  accountId?: string;
+}): Promise<void> {
+  if (!fromTokenAmount) return;
+
+  const ZERO_ADDRESS = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+  const fromAddr = fromToken.isNative
+    ? ZERO_ADDRESS
+    : fromToken.contractAddress;
+  const toAddr = toToken.isNative
+    ? ZERO_ADDRESS
+    : toToken.contractAddress;
+  const chainId = Number(fromToken.networkId.split('--')[1]);
+  if (Number.isNaN(chainId)) {
+    console.error('[OKX-QUOTE] ❌ invalid chainId:', fromToken.networkId);
+    return;
+  }
+
+  const requestParams: IFetchQuotesParams = {
+    fromTokenAddress: fromAddr,
+    toTokenAddress: toAddr,
     fromTokenAmount,
-    userAddress,
+    fromNetworkId: fromToken.networkId,
+    toNetworkId: toToken.networkId,
+    protocol: EProtocolOfExchange.SWAP,
     slippagePercentage,
-    autoSlippage,
-    blockNumber,
-    receivingAddress,
+  };
+
+  // — OPEN —
+  appEventBus.emit(EAppEventBusNames.SwapQuoteEvent, {
+    type: 'open',
+    event: { type: 'open' } as IEventSourceOpenEvent,
+    params: requestParams,
+    tokenPairs: { fromToken, toToken },
     accountId,
-    protocol,
-    expirationTime,
-    limitPartiallyFillable,
-    kind,
-    toTokenAmount,
-    userMarketPriceRate,
-  }: {
-    fromToken: ISwapToken;
-    toToken: ISwapToken;
-    fromTokenAmount?: string;
-    userAddress?: string;
-    slippagePercentage: number;
-    autoSlippage?: boolean;
-    blockNumber?: number;
-    receivingAddress?: string;
-    accountId?: string;
-    protocol: ESwapTabSwitchType;
-    expirationTime?: number;
-    limitPartiallyFillable?: boolean;
-    kind?: ESwapQuoteKind;
-    toTokenAmount?: string;
-    userMarketPriceRate?: string;
-  }): Promise<void> {
-    if (!fromTokenAmount) return;
+  });
 
-    const ZERO = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
-    const fromAddr = fromToken.isNative ? ZERO : fromToken.contractAddress;
-    const toAddr = toToken.isNative ? ZERO : toToken.contractAddress;
+  let quotes: IFetchQuoteResult[] = [];
+  let delay = 15000;
 
-    const denyCross = await this.getDenyCrossChainProvider(
-      fromToken.networkId,
-      toToken.networkId,
-    );
-    const denySingle = await this.getDenySingleSwapProvider(
-      fromToken.networkId,
-      toToken.networkId,
-    );
-
-    // повторим точно оригинальный params для SSE-url
-    const requestParams: IFetchQuotesParams = {
-      fromTokenAddress: fromAddr,
-      toTokenAddress: toAddr,
+  try {
+    console.log('[OKX-QUOTE] 🔄 SSE → fetchQuotes()', {
+      fromAddr,
+      toAddr,
       fromTokenAmount,
-      toTokenAmount,               // <— теперь не пустая строка, а из preview
-      fromNetworkId: fromToken.networkId,
-      toNetworkId: toToken.networkId,
-      protocol,
-      userAddress,
       slippagePercentage,
-      autoSlippage,
-      blockNumber,
-      expirationTime,
-      receivingAddress,
-      limitPartiallyFillable,
-      kind,
-      userMarketPriceRate,
-      denyCrossChainProvider: denyCross,
-      denySingleSwapProvider: denySingle,
-    };
+      accountId,
+    });
 
-    // — OPEN —
+    quotes = await this.fetchQuotes({
+      fromToken,
+      toToken,
+      fromTokenAmount,
+      slippagePercentage,
+      accountId,
+    });
+
+    if (!quotes.length) {
+      quotes = [
+        {
+          info: { provider: '', providerName: '' },
+          fromTokenInfo: fromToken,
+          toTokenInfo: toToken,
+        },
+      ];
+    }
+
+    // — MESSAGE —
     appEventBus.emit(EAppEventBusNames.SwapQuoteEvent, {
-      type: 'open',
-      event: { type: 'open' } as IEventSourceOpenEvent,
+      type: 'message',
+      event: {
+        type: 'message',
+        data: JSON.stringify(quotes),
+        lastEventId: null,
+        url: `${OKX_BASE_URL}${OKX_API_PATH_PREFIX}/quote`,
+      } as IEventSourceMessageEvent,
       params: requestParams,
       tokenPairs: { fromToken, toToken },
       accountId,
     });
-
-    let quotes: IFetchQuoteResult[] = [];
-    let delay = 15000;
-
-    try {
-      quotes = await this.fetchQuotes({
+  } catch (e: any) {
+    if (axios.isAxiosError(e) && e.response?.status === 429) {
+      console.warn('[OKX-QUOTE] ⚠️ rate limited, backoff');
+      delay = 10000;
+    } else {
+      console.error('[OKX-QUOTE] ❌ error:', e);
+      // — ERROR —
+      appEventBus.emit(EAppEventBusNames.SwapQuoteEvent, {
+        type: 'error',
+        event: {
+          type: 'error',
+          message: e?.message ?? 'OKX quote error',
+        } as IEventSourceErrorEvent,
+        params: requestParams,
+        tokenPairs: { fromToken, toToken },
+        accountId,
+      });
+    }
+  } finally {
+    // — DONE —
+    appEventBus.emit(EAppEventBusNames.SwapQuoteEvent, {
+      type: 'done',
+      event: { type: 'done' } as IEventSourceDoneEvent,
+      params: requestParams,
+      tokenPairs: { fromToken, toToken },
+      accountId,
+    });
+    console.log(`[OKX-QUOTE] scheduling next in ${delay / 1000}s`);
+    setTimeout(() => {
+      void this.fetchQuotesEvents({
         fromToken,
         toToken,
         fromTokenAmount,
-        // userAddress,
         slippagePercentage,
-        // autoSlippage,
-        // blockNumber,
-        // receivingAddress,
-        accountId,
-        protocol,
-        // expirationTime,
-        // limitPartiallyFillable,
-        kind,
-        // toTokenAmount,
-        // userMarketPriceRate,
-      });
-
-      if (!quotes.length) {
-        quotes = [{
-          info: { provider: '', providerName: '' },
-          fromTokenInfo: fromToken,
-          toTokenInfo: toToken,
-        }];
-      }
-
-      // — MESSAGE —
-      appEventBus.emit(EAppEventBusNames.SwapQuoteEvent, {
-        type: 'message',
-        event: {
-          type: 'message',
-          data: JSON.stringify(quotes),
-          lastEventId: null,
-          url: `${OKX_BASE_URL}${OKX_API_PATH_PREFIX}/quote`,
-        } as IEventSourceMessageEvent,
-        params: requestParams,
-        tokenPairs: { fromToken, toToken },
         accountId,
       });
-    } catch (e: any) {
-      if (axios.isAxiosError(e) && e.response?.status === 429) {
-        delay = 10000;
-      } else {
-        appEventBus.emit(EAppEventBusNames.SwapQuoteEvent, {
-          type: 'error',
-          event: {
-            type: 'error',
-            message: e?.message ?? 'OKX quote error',
-          } as IEventSourceErrorEvent,
-          params: requestParams,
-          tokenPairs: { fromToken, toToken },
-          accountId,
-        });
-      }
-    } finally {
-      // — DONE —
-      appEventBus.emit(EAppEventBusNames.SwapQuoteEvent, {
-        type: 'done',
-        event: { type: 'done' } as IEventSourceDoneEvent,
-        params: requestParams,
-        tokenPairs: { fromToken, toToken },
-        accountId,
-      });
-      setTimeout(() => {
-        void this.fetchQuotesEvents({
-          fromToken,
-          toToken,
-          fromTokenAmount,
-          userAddress,
-          slippagePercentage,
-          autoSlippage,
-          blockNumber,
-          receivingAddress,
-          accountId,
-          protocol,
-          expirationTime,
-          limitPartiallyFillable,
-          kind,
-          toTokenAmount,
-          userMarketPriceRate,
-        });
-      }, delay);
-    }
+    }, delay);
   }
-
+}
 
   async getDenyCrossChainProvider(fromNetworkId: string, toNetworkId: string) {
     if (fromNetworkId === toNetworkId) {
@@ -1284,7 +1181,7 @@ async fetchQuotes({
       if (
         item.txInfo.receiverTransactionId &&
         !this._crossChainReceiveTxBlockNotificationMap[
-        item.txInfo.receiverTransactionId
+          item.txInfo.receiverTransactionId
         ]
       ) {
         void this.backgroundApi.serviceNotification.blockNotificationForTxId({
@@ -1323,23 +1220,25 @@ async fetchQuotes({
         void this.backgroundApi.serviceApp.showToast({
           method:
             item.status === ESwapTxHistoryStatus.SUCCESS ||
-              item.status === ESwapTxHistoryStatus.PARTIALLY_FILLED
+            item.status === ESwapTxHistoryStatus.PARTIALLY_FILLED
               ? 'success'
               : 'error',
           title: appLocale.intl.formatMessage({
             id:
               item.status === ESwapTxHistoryStatus.SUCCESS ||
-                item.status === ESwapTxHistoryStatus.PARTIALLY_FILLED
+              item.status === ESwapTxHistoryStatus.PARTIALLY_FILLED
                 ? ETranslations.swap_page_toast_swap_successful
                 : ETranslations.swap_page_toast_swap_failed,
           }),
-          message: `${numberFormat(item.baseInfo.fromAmount, {
-            formatter: 'balance',
-          }) as string
-            } ${item.baseInfo.fromToken.symbol} → ${numberFormat(item.baseInfo.toAmount, {
+          message: `${
+            numberFormat(item.baseInfo.fromAmount, {
               formatter: 'balance',
             }) as string
-            } ${item.baseInfo.toToken.symbol}`,
+          } ${item.baseInfo.fromToken.symbol} → ${
+            numberFormat(item.baseInfo.toAmount, {
+              formatter: 'balance',
+            }) as string
+          } ${item.baseInfo.toToken.symbol}`,
         });
       }
     }
@@ -1360,8 +1259,8 @@ async fetchQuotes({
       ...pre,
       swapHistoryPendingList: statuses
         ? pre.swapHistoryPendingList.filter(
-          (item) => !statuses?.includes(item.status),
-        )
+            (item) => !statuses?.includes(item.status),
+          )
         : [],
     }));
     await Promise.all(
@@ -1466,11 +1365,11 @@ async fetchQuotes({
         await this.updateSwapHistoryItem(currentSwapTxHistory);
         if (
           currentSwapTxHistory.crossChainStatus ===
-          ESwapCrossChainStatus.FROM_SUCCESS ||
+            ESwapCrossChainStatus.FROM_SUCCESS ||
           currentSwapTxHistory.crossChainStatus ===
-          ESwapCrossChainStatus.TO_SUCCESS ||
+            ESwapCrossChainStatus.TO_SUCCESS ||
           currentSwapTxHistory.crossChainStatus ===
-          ESwapCrossChainStatus.REFUNDED ||
+            ESwapCrossChainStatus.REFUNDED ||
           (!currentSwapTxHistory.crossChainStatus &&
             (txStatusRes?.state === ESwapTxHistoryStatus.SUCCESS ||
               txStatusRes?.state === ESwapTxHistoryStatus.PARTIALLY_FILLED))
@@ -1806,17 +1705,18 @@ async fetchQuotes({
       interval &&
       this._limitOrderCurrentAccountId &&
       this._limitOrderCurrentAccountId !==
-      `${indexedAccountId ?? ''}-${otherWalletTypeAccountId ?? ''}`
+        `${indexedAccountId ?? ''}-${otherWalletTypeAccountId ?? ''}`
     ) {
       return;
     }
     if (
       !interval &&
       this._limitOrderCurrentAccountId !==
-      `${indexedAccountId ?? ''}-${otherWalletTypeAccountId ?? ''}`
+        `${indexedAccountId ?? ''}-${otherWalletTypeAccountId ?? ''}`
     ) {
-      this._limitOrderCurrentAccountId = `${indexedAccountId ?? ''}-${otherWalletTypeAccountId ?? ''
-        }`;
+      this._limitOrderCurrentAccountId = `${indexedAccountId ?? ''}-${
+        otherWalletTypeAccountId ?? ''
+      }`;
     }
     let sameAccount = true;
     const swapSupportNetworks = await this.getCacheSwapSupportNetworks();

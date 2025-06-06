@@ -72,6 +72,7 @@ const SwapQuoteResult = ({
   refreshAction,
   onOpenRecipient,
 }: ISwapQuoteResultProps) => {
+  console.log('🔔 quoteResult', quoteResult);
   const [openResult, setOpenResult] = useState(false);
   const [fromToken] = useSwapSelectFromTokenAtom();
   const [toToken] = useSwapSelectToTokenAtom();

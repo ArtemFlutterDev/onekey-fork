@@ -1,4 +1,4 @@
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo, useState, useEffect } from 'react';
 
 import BigNumber from 'bignumber.js';
 import { useIntl } from 'react-intl';
@@ -67,26 +67,13 @@ const SwapInputContainer = ({
   onSelectPercentageStage,
   balance,
 }: ISwapInputContainerProps) => {
-  useSwapSelectedTokenInfo({
-    token,
-    type: direction,
-  });
+  useSwapSelectedTokenInfo({ token, type: direction });
+
   const [settingsPersistAtom] = useSettingsPersistAtom();
   const [alerts] = useSwapAlertsAtom();
   const intl = useIntl();
   const { address, accountInfo } = useSwapAddressInfo(direction);
   const [rateDifference] = useRateDifferenceAtom();
-  const amountPrice = useMemo(() => {
-    if (!token?.price) return '0.0';
-    const tokenPriceBN = new BigNumber(token.price ?? 0);
-    const tokenFiatValueBN = new BigNumber(amountValue ?? 0).multipliedBy(
-      tokenPriceBN,
-    );
-    return tokenFiatValueBN.isNaN()
-      ? '0.0'
-      : `${tokenFiatValueBN.decimalPlaces(6, BigNumber.ROUND_DOWN).toFixed()}`;
-  }, [amountValue, token?.price]);
-
   const [fromToken] = useSwapSelectFromTokenAtom();
   const [toToken] = useSwapSelectToTokenAtom();
   const [fromTokenAmount] = useSwapFromTokenAmountAtom();
@@ -95,8 +82,28 @@ const SwapInputContainer = ({
   const [swapQuoteActionLock] = useSwapQuoteActionLockAtom();
   const [, setInAppNotification] = useInAppNotificationAtom();
 
+  const [percentageInputStageShow, setPercentageInputStageShow] =
+    useState(false);
+
+  const tempMemoized = useMemo(() => ({ token, direction }), [token, direction]); 
+
+  useEffect(() => {
+    if (typeof amountValue === 'string') {
+      void 0;
+    }
+  }, [amountValue]);
+
+  const amountPrice = useMemo(() => {
+    if (!token?.price) return '0.0';
+    const tokenPriceBN = new BigNumber(token.price);
+    const amount = new BigNumber(amountValue).multipliedBy(tokenPriceBN);
+    return amount.isNaN()
+      ? '0.0'
+      : amount.decimalPlaces(6, BigNumber.ROUND_DOWN).toFixed();
+  }, [amountValue, token?.price]);
+
   const fromInputHasError = useMemo(() => {
-    const accountError =
+    const accountErr =
       (alerts?.states.some((item) => item.inputShowError) &&
         direction === ESwapDirectionType.FROM) ||
       (!address &&
@@ -104,46 +111,32 @@ const SwapInputContainer = ({
           accountUtils.isHwWallet({ walletId: accountInfo?.wallet?.id }) ||
           accountUtils.isQrWallet({ walletId: accountInfo?.wallet?.id })));
     const balanceBN = new BigNumber(fromTokenBalance ?? 0);
-    const amountValueBN = new BigNumber(fromTokenAmount.value ?? 0);
-    const hasBalanceError =
+    const amountBN = new BigNumber(fromTokenAmount.value ?? 0);
+    const hasBalanceErr =
       direction === ESwapDirectionType.FROM &&
       !!fromToken &&
       !!address &&
-      balanceBN.lt(amountValueBN);
+      balanceBN.lt(amountBN);
     return {
-      accountError,
-      hasBalanceError,
+      accountError: accountErr,
+      hasBalanceError: hasBalanceErr,
     };
-  }, [
-    alerts?.states,
-    direction,
-    address,
-    accountInfo?.wallet?.id,
-    fromTokenBalance,
-    fromTokenAmount,
-    fromToken,
-  ]);
+  }, [alerts?.states, direction, address, accountInfo?.wallet?.id, fromTokenBalance, fromTokenAmount, fromToken]);
+
   const onRateDifferencePress = useCallback(() => {
     Dialog.show({
-      title: intl.formatMessage({
-        id: ETranslations.swap_page_price_impact_title,
-      }),
-      description: intl.formatMessage({
-        id: ETranslations.swap_page_price_impact_content_1,
-      }),
+      title: intl.formatMessage({ id: ETranslations.swap_page_price_impact_title }),
+      description: intl.formatMessage({ id: ETranslations.swap_page_price_impact_content_1 }),
       renderContent: (
         <SizableText size="$bodyLg" color="$textSubdued">
-          {intl.formatMessage({
-            id: ETranslations.swap_page_price_impact_content_2,
-          })}
+          {intl.formatMessage({ id: ETranslations.swap_page_price_impact_content_2 })}
         </SizableText>
       ),
       showCancelButton: false,
-      onConfirmText: intl.formatMessage({
-        id: ETranslations.global_ok,
-      }),
+      onConfirmText: intl.formatMessage({ id: ETranslations.global_ok }),
     });
   }, [intl]);
+
   const valueMoreComponent = useMemo(() => {
     if (
       rateDifference &&
@@ -151,20 +144,13 @@ const SwapInputContainer = ({
       swapTypeSwitch !== ESwapTabSwitchType.LIMIT
     ) {
       let color = '$textSubdued';
-      if (inputLoading) {
-        color = '$textPlaceholder';
-      }
-      if (rateDifference.unit === ESwapRateDifferenceUnit.NEGATIVE) {
-        color = '$textCritical';
-      }
-      if (rateDifference.unit === ESwapRateDifferenceUnit.POSITIVE) {
-        color = '$textSuccess';
-      }
+      if (inputLoading) color = '$textPlaceholder';
+      if (rateDifference.unit === ESwapRateDifferenceUnit.NEGATIVE) color = '$textCritical';
+      if (rateDifference.unit === ESwapRateDifferenceUnit.POSITIVE) color = '$textSuccess';
+
       return (
         <XStack alignItems="center">
-          <SizableText size="$bodyMd" color={color}>
-            (
-          </SizableText>
+          <SizableText size="$bodyMd" color={color}>(</SizableText>
           <SizableText
             size="$bodyMd"
             color={color}
@@ -177,23 +163,12 @@ const SwapInputContainer = ({
           >
             {rateDifference.value}
           </SizableText>
-          <SizableText size="$bodyMd" color={color}>
-            )
-          </SizableText>
+          <SizableText size="$bodyMd" color={color}>)</SizableText>
         </XStack>
       );
     }
     return null;
-  }, [
-    direction,
-    inputLoading,
-    onRateDifferencePress,
-    rateDifference,
-    swapTypeSwitch,
-  ]);
-
-  const [percentageInputStageShow, setPercentageInputStageShow] =
-    useState(false);
+  }, [direction, inputLoading, onRateDifferencePress, rateDifference, swapTypeSwitch]);
 
   const onFromInputFocus = () => {
     setPercentageInputStageShow(true);
@@ -206,25 +181,18 @@ const SwapInputContainer = ({
   };
 
   const onFromInputBlur = () => {
-    // delay to avoid blur when select percentage stage
     if (direction === ESwapDirectionType.FROM) {
       setInAppNotification((v) => ({
         ...v,
         swapPercentageInputStageShowForNative: false,
       }));
     }
-    setTimeout(() => {
-      setPercentageInputStageShow(false);
-    }, 200);
+    setTimeout(() => setPercentageInputStageShow(false), 200);
   };
 
   const inputIsLoading = useMemo(() => {
     if (direction === ESwapDirectionType.TO) {
-      return (
-        inputLoading &&
-        (!swapQuoteActionLock.kind ||
-          swapQuoteActionLock.kind === ESwapQuoteKind.SELL)
-      );
+      return inputLoading && (!swapQuoteActionLock.kind || swapQuoteActionLock.kind === ESwapQuoteKind.SELL);
     }
     if (direction === ESwapDirectionType.FROM) {
       return inputLoading && swapQuoteActionLock.kind === ESwapQuoteKind.BUY;
@@ -232,43 +200,32 @@ const SwapInputContainer = ({
     return inputLoading;
   }, [direction, inputLoading, swapQuoteActionLock.kind]);
 
-  const showPercentageInput = useMemo(
-    () =>
-      direction === ESwapDirectionType.FROM &&
-      (percentageInputStageShow || !!amountValue),
-    [direction, percentageInputStageShow, amountValue],
-  );
+  const showPercentageInput = useMemo(() => {
+    return direction === ESwapDirectionType.FROM && (percentageInputStageShow || !!amountValue);
+  }, [direction, percentageInputStageShow, amountValue]);
 
-  const showPercentageInputDebounce = useDebounce(showPercentageInput, 100, {
-    leading: true,
-  });
+  const showPercentageInputDebounce = useDebounce(showPercentageInput, 100, { leading: true });
 
-  const showActionBuy = useMemo(
-    () =>
+  const showActionBuy = useMemo(() => {
+    return (
       direction === ESwapDirectionType.FROM &&
       !!accountInfo?.account?.id &&
       !!fromToken &&
-      fromInputHasError.hasBalanceError,
-    [direction, accountInfo?.account?.id, fromToken, fromInputHasError],
-  );
+      fromInputHasError.hasBalanceError
+    );
+  }, [direction, accountInfo?.account?.id, fromToken, fromInputHasError]);
+
   const readOnly = useMemo(() => {
-    if (direction === ESwapDirectionType.TO) {
-      return (
-        checkWrappedTokenPair({
-          fromToken,
-          toToken,
-        }) || swapTypeSwitch !== ESwapTabSwitchType.LIMIT
-      );
-    }
-    return false;
+    return (
+      direction === ESwapDirectionType.TO &&
+      (checkWrappedTokenPair({ fromToken, toToken }) || swapTypeSwitch !== ESwapTabSwitchType.LIMIT)
+    );
   }, [direction, swapTypeSwitch, fromToken, toToken]);
+
   return (
     <YStack borderRadius="$3" backgroundColor="$bgSubdued" borderWidth="$0">
       <XStack justifyContent="space-between" pt="$2.5" px="$3.5">
-        <SwapAccountAddressContainer
-          type={direction}
-          onClickNetwork={onSelectToken}
-        />
+        <SwapAccountAddressContainer type={direction} onClickNetwork={onSelectToken} />
         <SwapInputActions
           fromToken={fromToken}
           accountInfo={accountInfo}
@@ -282,22 +239,14 @@ const SwapInputContainer = ({
         borderWidth="$0"
         onChange={onAmountChange}
         value={amountValue}
-        hasError={
-          fromInputHasError.accountError || fromInputHasError.hasBalanceError
-        }
+        hasError={fromInputHasError.accountError || fromInputHasError.hasBalanceError}
         balanceProps={{
           value: balance,
-          onPress:
-            direction === ESwapDirectionType.FROM
-              ? onBalanceMaxPress
-              : undefined,
+          onPress: direction === ESwapDirectionType.FROM ? onBalanceMaxPress : undefined,
         }}
         valueProps={{
           value: amountPrice,
-          color:
-            inputLoading && direction === ESwapDirectionType.TO
-              ? '$textPlaceholder'
-              : undefined,
+          color: inputLoading && direction === ESwapDirectionType.TO ? '$textPlaceholder' : undefined,
           currency: settingsPersistAtom.currencyInfo.symbol,
           moreComponent: valueMoreComponent,
         }}
@@ -307,13 +256,9 @@ const SwapInputContainer = ({
           color: inputIsLoading ? '$textPlaceholder' : undefined,
           style:
             !platformEnv.isNative && readOnly
-              ? ({
-                  caretColor: 'transparent',
-                } as unknown as StyleProp<TextStyle>)
+              ? ({ caretColor: 'transparent' } as StyleProp<TextStyle>)
               : undefined,
-          inputAccessoryViewID: platformEnv.isNativeIOS
-            ? SwapAmountInputAccessoryViewID
-            : undefined,
+          inputAccessoryViewID: platformEnv.isNativeIOS ? SwapAmountInputAccessoryViewID : undefined,
           autoCorrect: false,
           spellCheck: false,
           autoComplete: 'off',
@@ -325,9 +270,7 @@ const SwapInputContainer = ({
           selectedNetworkImageUri: token?.networkLogoURI,
           selectedTokenImageUri: token?.logoURI,
           selectedTokenSymbol: token?.symbol,
-          onPress: () => {
-            onSelectToken(direction);
-          },
+          onPress: () => onSelectToken(direction),
         }}
         enableMaxAmount={!!(direction === ESwapDirectionType.FROM)}
       />

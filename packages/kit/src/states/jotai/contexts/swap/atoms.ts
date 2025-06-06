@@ -206,6 +206,8 @@ export const {
   use: useSwapSortedQuoteListAtom,
 } = contextAtomComputed<IFetchQuoteResult[]>((get) => {
   const list = get(swapQuoteListAtom());
+   const manual = get(swapManualSelectQuoteProvidersAtom());
+  console.log('▶️ currentSelectAtom', { list, manual });
   const fromTokenAmount = get(swapFromTokenAmountAtom());
   const fromTokenAmountBN = new BigNumber(fromTokenAmount.value);
   const sortType = get(swapProviderSortAtom());
@@ -350,28 +352,28 @@ export const {
 export const {
   atom: swapQuoteCurrentSelectAtom,
   use: useSwapQuoteCurrentSelectAtom,
-} = contextAtomComputed((get) => {
+} = contextAtomComputed<IFetchQuoteResult | undefined>((get) => {
+  // Получаем уже отсортированный список котировок
   const list = get(swapSortedQuoteListAtom());
-  const manualSelectQuoteProviders = get(swapManualSelectQuoteProvidersAtom());
-  const manualSelectQuoteResult = list.find(
-    (item) =>
-      item.info.provider === manualSelectQuoteProviders?.info.provider &&
-      item.info.providerName === manualSelectQuoteProviders?.info.providerName,
-  );
-  if (manualSelectQuoteProviders && manualSelectQuoteResult?.toAmount) {
-    return manualSelectQuoteResult;
-  }
-  if (list?.length > 0) {
-    if (
-      manualSelectQuoteProviders &&
-      !manualSelectQuoteProviders?.unSupportReceiveAddressDifferent
-    ) {
-      return list.find((item) => !item.unSupportReceiveAddressDifferent);
+  // Получаем возможный ручной выбор пользователя
+  const manual = get(swapManualSelectQuoteProvidersAtom());
+
+  // 1) Если была ручная установка и в списке всё ещё есть элемент с таким же провайдером — возвращаем его
+  if (manual?.toAmount) {
+    const found = list.find(
+      (q) =>
+        q.info.provider === manual.info.provider &&
+        q.info.providerName === manual.info.providerName,
+    );
+    if (found) {
+      return found;
     }
-    return list[0];
   }
-  return undefined;
+
+  // 2) В остальных случаях просто возвращаем первый элемент списка (или undefined, если список пуст)
+  return list[0];
 });
+
 
 export const { atom: swapTokenMetadataAtom, use: useSwapTokenMetadataAtom } =
   contextAtomComputed<{
