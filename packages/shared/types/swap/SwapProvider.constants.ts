@@ -37,7 +37,7 @@ export const swapTokenCatchMapMaxCount = 30;
 
 export const swapApproveResetValue = '0';
 
-export const swapQuoteIntervalMaxCount = 5;
+export const swapQuoteIntervalMaxCount = 500;
 
 export const swapQuoteFetchInterval = timerUtils.getTimeDurationMs({
   seconds: 10,

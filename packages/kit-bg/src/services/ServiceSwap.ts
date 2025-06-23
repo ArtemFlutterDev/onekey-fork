@@ -580,7 +580,6 @@ async fetchQuotes({
     .toFixed();
   console.log('🔔 [OKX-QUOTE] fromAmount:', fromAmount, 'toAmount:', toAmount);
 
-  // 1) главный агрегатор
   const mainQuotes: IFetchQuoteResult[] = q.dexRouterList.map((routerItem: any) => {
     const proto = routerItem.subRouterList?.[0]?.dexProtocol?.[0] ?? {};
     const providerName = proto.dexName || 'OKX';
@@ -613,7 +612,7 @@ async fetchQuotes({
   });
   console.log('🔔 [OKX-QUOTE] mainQuotes array:', mainQuotes);
 
-  // 2) сравнение с другими DEX-ами
+
   const cmpQuotes: IFetchQuoteResult[] = q.quoteCompareList.map((item: any) => {
      console.log('PROVIDER ITEM OTHER', item)
     const altTo = new BigNumber(item.amountOut)
@@ -756,7 +755,6 @@ async fetchQuotes({
 
   private _quotePollingTimeout?: ReturnType<typeof setTimeout>;
 
-  // ─── 2) fetchQuotesEvents (SSE-эммуляция с поллингом) ───────────────
   @backgroundMethod()
   async fetchQuotesEvents({
     fromToken,
@@ -806,12 +804,12 @@ async fetchQuotes({
       toToken.networkId,
     );
 
-    // повторим точно оригинальный params для SSE-url
+   
     const requestParams: IFetchQuotesParams = {
       fromTokenAddress: fromAddr,
       toTokenAddress: toAddr,
       fromTokenAmount,
-      toTokenAmount,               // <— теперь не пустая строка, а из preview
+      toTokenAmount,              
       fromNetworkId: fromToken.networkId,
       toNetworkId: toToken.networkId,
       protocol,
@@ -867,6 +865,8 @@ async fetchQuotes({
         }];
       }
 
+      console.log('[OKX-QUOTE] emitting message', quotes);
+
       // — MESSAGE —
       appEventBus.emit(EAppEventBusNames.SwapQuoteEvent, {
         type: 'message',
@@ -896,7 +896,7 @@ async fetchQuotes({
         });
       }
     } finally {
-      // — DONE —
+     
       appEventBus.emit(EAppEventBusNames.SwapQuoteEvent, {
         type: 'done',
         event: { type: 'done' } as IEventSourceDoneEvent,
@@ -1090,6 +1090,165 @@ async fetchQuotes({
       },
     });
     return resp.data.data[0];
+  }
+
+  @backgroundMethod()
+  async fetchOkxApproveTransaction({
+    chainIndex,
+    tokenContractAddress,
+    approveAmount,
+  }: {
+    chainIndex: number;
+    tokenContractAddress: string;
+    approveAmount: string;
+  }): Promise<{
+    data: string;
+    dexContractAddress: string;
+    gasLimit: string;
+    gasPrice: string;
+  } | undefined> {
+
+    const path = `${OKX_API_PATH_PREFIX}/approve-transaction`;
+    const qs = new URLSearchParams({
+      chainIndex: chainIndex.toString(),
+      tokenContractAddress,
+      approveAmount,
+    }).toString();
+
+
+    const headers = signOkxRequest({
+      method: 'GET',
+      requestPath: path,
+      queryString: qs,
+    });
+
+    try {
+      const resp = await axios.get(`${OKX_BASE_URL}${path}`, {
+        params: { chainIndex, tokenContractAddress, approveAmount },
+        headers,
+      });
+
+      if (resp.data.code !== '0' || !Array.isArray(resp.data.data) || resp.data.data.length === 0) {
+        console.warn('[OKX-APPROVE] unexpected response', resp.data);
+        return undefined;
+      }
+
+      const item = resp.data.data[0];
+      return {
+        data: item.data,
+        dexContractAddress: item.dexContractAddress,
+        gasLimit: item.gasLimit,
+        gasPrice: item.gasPrice,
+      };
+    } catch (error: any) {
+      console.error('[OKX-APPROVE] error fetching approve-transaction', error);
+      return undefined;
+    }
+  }
+
+  @backgroundMethod()
+  async fetchOkxSwap({
+    chainId,
+    amount,
+    swapMode = 'exactIn',
+    fromTokenAddress,
+    toTokenAddress,
+    slippage,
+    userWalletAddress,
+    swapReceiverAddress,
+    feePercent,
+    fromTokenReferrerWalletAddress,
+    toTokenReferrerWalletAddress,
+    positiveSlippagePercent,
+    positiveSlippageFeeAddress,
+    gasLimit,
+    gasLevel,
+    computeUnitPrice,
+    computeUnitLimit,
+    dexIds,
+    directRoute,
+    priceImpactProtectionPercentage,
+    callDataMemo,
+    autoSlippage,
+    maxAutoSlippage,
+  }: {
+    chainId: number;
+    amount: string;
+    swapMode?: 'exactIn' | 'exactOut';
+    fromTokenAddress: string;
+    toTokenAddress: string;
+    slippage: string;
+    userWalletAddress: string;
+    swapReceiverAddress?: string;
+    feePercent?: string;
+    fromTokenReferrerWalletAddress?: string;
+    toTokenReferrerWalletAddress?: string;
+    positiveSlippagePercent?: string;
+    positiveSlippageFeeAddress?: string;
+    gasLimit?: string;
+    gasLevel?: 'slow' | 'average' | 'fast';
+    computeUnitPrice?: string;
+    computeUnitLimit?: string;
+    dexIds?: string;
+    directRoute?: boolean;
+    priceImpactProtectionPercentage?: string;
+    callDataMemo?: string;
+    autoSlippage?: boolean;
+    maxAutoSlippage?: string;
+  }): Promise<any> {
+    const path = `${OKX_API_PATH_PREFIX}/swap`;
+    const params: Record<string, any> = {
+      chainIndex: chainId.toString(),
+      chainId:    chainId.toString(),
+      amount,
+      swapMode,
+      fromTokenAddress,
+      toTokenAddress,
+      slippage,
+      userWalletAddress,
+    };
+    if (swapReceiverAddress) params.swapReceiverAddress = swapReceiverAddress;
+    if (feePercent) params.feePercent = feePercent;
+    if (fromTokenReferrerWalletAddress) {
+      params.fromTokenReferrerWalletAddress = fromTokenReferrerWalletAddress;
+    }
+    if (toTokenReferrerWalletAddress) {
+      params.toTokenReferrerWalletAddress = toTokenReferrerWalletAddress;
+    }
+    if (positiveSlippagePercent) {
+      params.positiveSlippagePercent = positiveSlippagePercent;
+    }
+    if (positiveSlippageFeeAddress) {
+      params.positiveSlippageFeeAddress = positiveSlippageFeeAddress;
+    }
+    if (gasLimit) params.gasLimit = gasLimit;
+    if (gasLevel) params.gasLevel = gasLevel;
+    if (computeUnitPrice) params.computeUnitPrice = computeUnitPrice;
+    if (computeUnitLimit) params.computeUnitLimit = computeUnitLimit;
+    if (dexIds) params.dexIds = dexIds;
+    if (directRoute !== undefined) params.directRoute = directRoute;
+    if (priceImpactProtectionPercentage) {
+      params.priceImpactProtectionPercentage = priceImpactProtectionPercentage;
+    }
+    if (callDataMemo) params.callDataMemo = callDataMemo;
+    if (autoSlippage !== undefined) params.autoSlippage = autoSlippage;
+    if (maxAutoSlippage) params.maxAutoSlippage = maxAutoSlippage;
+
+    const qs = new URLSearchParams(
+      Object.entries(params).map(([k, v]) => [k, String(v)]),
+    ).toString();
+
+    const headers = signOkxRequest({
+      method:      'GET',
+      requestPath: path,
+      queryString: qs,
+    });
+
+    const resp = await axios.get(`${OKX_BASE_URL}${path}`, {
+      params,
+      headers,
+    });
+    return resp.data;
   }
 
   @backgroundMethod()

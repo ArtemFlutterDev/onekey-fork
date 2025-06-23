@@ -183,6 +183,14 @@ export function useSwapActionState() {
     swapFromAddressInfo.accountInfo?.account?.id,
     quoteCurrentSelect?.providerDisableBatchTransfer,
   );
+
+    console.log(
+    '🔄 isRefreshQuote check:',
+    '\n  quoteIntervalCount:', quoteIntervalCount,
+    '\n  swapQuoteIntervalMaxCount:', swapQuoteIntervalMaxCount,
+    '\n  shouldRefreshQuote:', shouldRefreshQuote,
+    '\n  result:', quoteIntervalCount > swapQuoteIntervalMaxCount || shouldRefreshQuote
+  );
   const isRefreshQuote = useMemo(
     () => quoteIntervalCount > swapQuoteIntervalMaxCount || shouldRefreshQuote,
     [quoteIntervalCount, shouldRefreshQuote],
@@ -191,28 +199,54 @@ export function useSwapActionState() {
   const hasError = alerts.states.some(
     (item) => item.alertLevel === ESwapAlertLevel.ERROR,
   );
-  const quoteResultNoMatch = useMemo(
-    () =>
-      (quoteCurrentSelect &&
-        (quoteCurrentSelect.fromTokenInfo.networkId !== fromToken?.networkId ||
-          quoteCurrentSelect.toTokenInfo.networkId !== toToken?.networkId ||
-          quoteCurrentSelect.fromTokenInfo.contractAddress !==
-            fromToken?.contractAddress ||
-          quoteCurrentSelect.toTokenInfo.contractAddress !==
-            toToken?.contractAddress)) ||
-      (quoteCurrentSelect?.protocol !== EProtocolOfExchange.LIMIT &&
-        quoteCurrentSelect?.kind === ESwapQuoteKind.SELL &&
-        quoteCurrentSelect?.allowanceResult &&
-        quoteCurrentSelect.allowanceResult.amount !== fromTokenAmount.value),
-    [
-      fromToken?.contractAddress,
-      fromToken?.networkId,
-      fromTokenAmount,
-      quoteCurrentSelect,
-      toToken?.contractAddress,
-      toToken?.networkId,
-    ],
+
+    console.log(
+    '🔄 isRefreshQuote (interval):',
+    quoteIntervalCount,
+    '>',
+    swapQuoteIntervalMaxCount,
+    '||',
+    shouldRefreshQuote,
+    '=>',
+    quoteIntervalCount > swapQuoteIntervalMaxCount || shouldRefreshQuote
   );
+
+ const quoteResultNoMatch = useMemo(() => {
+  // guard: если нет quoteCurrentSelect или токенов — НЕ считаем, что нужно рефрешить
+  if (!quoteCurrentSelect || !fromToken || !toToken) {
+    return false;
+  }
+
+  // для нативных токенов считаем, что они «одинаковые» по умолчанию
+  const sameFrom =
+    quoteCurrentSelect.fromTokenInfo.isNative && fromToken.isNative
+      ? true
+      : quoteCurrentSelect.fromTokenInfo.contractAddress ===
+        fromToken.contractAddress;
+
+  const sameTo =
+    quoteCurrentSelect.toTokenInfo.isNative && toToken.isNative
+      ? true
+      : quoteCurrentSelect.toTokenInfo.contractAddress ===
+        toToken.contractAddress;
+
+  const mismatchTokens = !sameFrom || !sameTo;
+
+  const mismatchLimit =
+    quoteCurrentSelect.protocol !== EProtocolOfExchange.LIMIT &&
+    quoteCurrentSelect.kind === ESwapQuoteKind.SELL &&
+    quoteCurrentSelect.allowanceResult != null &&
+    quoteCurrentSelect.allowanceResult.amount !== fromTokenAmount.value;
+
+  return mismatchTokens || mismatchLimit;
+}, [
+  quoteCurrentSelect,
+  fromToken,
+  toToken,
+  fromTokenAmount.value,
+]);
+ 
+
   const quoteResultNoMatchDebounce = useDebounce(quoteResultNoMatch, 10);
   const actionInfo = useMemo(() => {
     const infoRes = {

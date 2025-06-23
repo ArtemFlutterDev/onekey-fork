@@ -269,7 +269,9 @@ export function useSwapBuildTx() {
 
   const cancelBuildTx = useCallback(() => {
     handleTxFail();
+    
     setSwapShouldRefreshQuote(true);
+    console.log('USE SWAP BUILD TX - SETTING SETSWAPREFRESH TRUE - CANCEL BUILD TX');
   }, [handleTxFail, setSwapShouldRefreshQuote]);
 
   const cancelApproveTx = useCallback(() => {
@@ -919,6 +921,7 @@ export function useSwapBuildTx() {
   const approveTx = useCallback(
     async (amount: string, isMax?: boolean, resetApproveValue?: string) => {
       const allowanceInfo = selectQuote?.allowanceResult;
+      console.log('>> approveTx', { amount, isMax, resetApproveValue, allowanceInfo });
       if (
         allowanceInfo &&
         fromToken &&
@@ -1008,11 +1011,13 @@ export function useSwapBuildTx() {
             } else {
               setSwapBuildTxFetching(false);
               setSwapShouldRefreshQuote(true);
+              console.log('USE SWAP BUILD TX - SETTING SETSWAPREFRESH TRUE - APPROVE TX');
             }
           } catch (e) {
             console.error(e);
             setSwapBuildTxFetching(false);
             setSwapShouldRefreshQuote(true);
+                          console.log('USE SWAP BUILD TX - SETTING SETSWAPREFRESH TRUE - APPROVE TX ON ERROR');
           }
         } else {
           try {
@@ -1055,6 +1060,7 @@ export function useSwapBuildTx() {
             }));
           } catch (e) {
             setSwapApproving(false);
+            Toast.error({ title: 'Approve failed' });
           }
         }
       }
@@ -1157,11 +1163,13 @@ export function useSwapBuildTx() {
         } else {
           setSwapBuildTxFetching(false);
           setSwapShouldRefreshQuote(true);
+                        console.log('USE SWAP BUILD TX - SETTING SETSWAPREFRESH TRUE - BUILD TX');
         }
       } catch (e) {
         setSwapBuildTxFetching(false);
         setSwapShouldRefreshQuote(true);
-      }
+                      console.log('USE SWAP BUILD TX - SETTING SETSWAPREFRESH TRUE - BUILD TX ERROR');
+      } 
     }
   }, [
     fromToken,

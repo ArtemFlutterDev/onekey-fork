@@ -377,12 +377,12 @@ runQuote = contextAtomMethod(
     kind?: ESwapQuoteKind,
     fromTokenAmount?: string,
   ) => {
-    // 1) Если нужно сбросить — чистим интервал и выходим
-    if (get(swapShouldRefreshQuoteAtom())) {
-      this.cleanQuoteInterval();
-      set(swapQuoteActionLockAtom(), (v) => ({ ...v, actionLock: false }));
-      return;
-    }
+    // // 1) Если нужно сбросить — чистим интервал и выходим
+    // if (get(swapShouldRefreshQuoteAtom())) {
+    //   this.cleanQuoteInterval();
+    //   set(swapQuoteActionLockAtom(), (v) => ({ ...v, actionLock: false }));
+    //   return;
+    // }
 
     // 2) Сбрасываем approve-статус
     set(swapApprovingAtom(), false);
@@ -408,18 +408,26 @@ runQuote = contextAtomMethod(
       });
 
       // 5) Сохраняем полный список котировок
-      set(swapQuoteListAtom(), quotes);
+set(swapQuoteListAtom(), quotes);
 
-      // 6) Автоматически выставляем лучший провайдер, если ещё не было ручного выбора
-      const manual = get(swapManualSelectQuoteProvidersAtom());
-      if (!manual && quotes.length > 0) {
-        const best = quotes.find((q) => q.isBest) ?? quotes[0];
-        set(swapManualSelectQuoteProvidersAtom(), best);
-        set(swapToTokenAmountAtom(), {
-          value: best.toAmount ?? '0',
-          isInput: false,
-        });
-      }
+if (quotes.length > 0) {
+   const best = quotes.find((q) => q.isBest) ?? quotes[0];
+   // 1) Обновляем «сколько я получу» внизу
+   set(swapToTokenAmountAtom(), {
+     value: best.toAmount ?? '0',
+     isInput: false,
+   });
+   // 2) Синхронизируем fromAmount внутри самой котировки,
+   // чтобы quoteCurrentSelect.fromAmount === fromTokenAmount.value
+   const fromAmountValue = fromTokenAmount ?? get(swapFromTokenAmountAtom()).value;
+   set(swapQuoteListAtom(), quotes.map((q) =>
+     q.quoteId === best.quoteId
+       ? { ...q, fromAmount: fromTokenAmount }
+       : q
+   ));
+ }
+ set(swapQuoteIntervalCountAtom(), 0);
+ set(swapShouldRefreshQuoteAtom(), false);
     } catch (error) {
       console.error('runQuote failed', error);
     } finally {

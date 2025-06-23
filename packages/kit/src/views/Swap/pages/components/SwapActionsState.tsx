@@ -62,6 +62,7 @@ import {
   useSwapQuoteLoading,
   useSwapSlippagePercentageModeInfo,
 } from '../../hooks/useSwapState';
+import { useSwapShouldRefreshQuoteAtom } from '@onekeyhq/kit/src/states/jotai/contexts/swap';
 
 interface ISwapActionsStateProps {
   onBuildTx: () => void;
@@ -188,6 +189,7 @@ const SwapActionsState = ({
   }
   const themeVariant = useThemeVariant();
   const quoting = useSwapQuoteEventFetching();
+  const [, setSwapShouldRefreshQuote] = useSwapShouldRefreshQuoteAtom();
   const handleApprove = useCallback(() => {
     if (swapActionState.shoutResetApprove) {
       Dialog.confirm({
@@ -220,6 +222,7 @@ const SwapActionsState = ({
   const { md } = useMedia();
 
   const onActionHandler = useCallback(() => {
+    console.log('cerf')
     if (swapActionState.noConnectWallet) {
       navigation.pushModal(EModalRoutes.OnboardingModal, {
         screen: EOnboardingPages.GetStarted,
@@ -228,6 +231,7 @@ const SwapActionsState = ({
       return;
     }
     if (swapActionState.isRefreshQuote) {
+      console.log('QUOTE ACTION - if reareshquote', swapActionState.isRefreshQuote)
       void quoteAction(
         swapSlippageRef.current,
         swapFromAddressInfo?.address,
@@ -237,10 +241,16 @@ const SwapActionsState = ({
         currentQuoteRes?.kind ?? ESwapQuoteKind.SELL,
         true,
         swapToAddressInfo?.address,
-      );
+      ) .then(() => {
+        console.log('QUOTE ACTION - SwapActionsState')
+    // **!!!** сбрасываем флаг, чтобы больше не было «Refresh mode»
+    setSwapShouldRefreshQuote(false);
+  });
     } else {
+      console.log('ELSE QUOTE ACTION - SwapActionsState')
       cleanQuoteInterval();
       if (swapActionState.isApprove) {
+        console.log('QUOTE ACTION - SwapActionsState', swapActionState.isApprove)
         handleApprove();
         return;
       }
@@ -266,6 +276,7 @@ const SwapActionsState = ({
     swapFromAddressInfo?.accountInfo?.account?.id,
     swapFromAddressInfo?.address,
     swapToAddressInfo?.address,
+    setSwapShouldRefreshQuote,
   ]);
 
   const onActionHandlerBefore = useCallback(() => {
@@ -565,7 +576,7 @@ const SwapActionsState = ({
           onPress={onActionHandlerBefore}
           size={pageType === EPageType.modal && !md ? 'medium' : 'large'}
           variant="primary"
-          disabled={swapActionState.disabled || swapActionState.isLoading}
+          disabled={(swapActionState.disabled && !swapActionState.isRefreshQuote) || swapActionState.isLoading}
         >
           {quoting || quoteLoading ? (
             <LottieView
